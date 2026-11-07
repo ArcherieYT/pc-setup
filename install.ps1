@@ -217,6 +217,32 @@ function Open-InThorium($url) {
     else { Start-Process $url }
 }
 
+# ---------- Spicetify / Bloxstrap helpers ----------
+function Invoke-SpicetifySetup {
+    # Refresh PATH so a fresh spicetify install is found in this session
+    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    $sp = (Get-Command spicetify -ErrorAction SilentlyContinue).Source
+    if (-not $sp -and (Test-Path "$env:LOCALAPPDATA\spicetify\spicetify.exe")) { $sp = "$env:LOCALAPPDATA\spicetify\spicetify.exe" }
+    if (-not $sp) { $script:notes += "Spicetify: couldn't find the spicetify command. Open a new PowerShell and run: spicetify backup apply"; return }
+
+    $spotify = "$env:APPDATA\Spotify\Spotify.exe"
+    $prefs   = "$env:APPDATA\Spotify\prefs"
+    if (-not (Test-Path $spotify)) { $script:notes += "Spicetify: Spotify.exe not found, open Spotify once then run: spicetify backup apply"; return }
+
+    Write-Host "  Opening Spotify so Spicetify can set up..." -ForegroundColor Yellow
+    Start-Process $spotify
+    $waited = 0
+    while (-not (Test-Path $prefs) -and $waited -lt 60) { Start-Sleep -Seconds 2; $waited += 2 }
+    Start-Sleep -Seconds 5
+    Get-Process Spotify -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Seconds 2
+
+    Write-Host "  Running spicetify backup apply..."
+    & $sp backup apply
+    if ($LASTEXITCODE -eq 0) { Write-Host "  SUCCESS: Spicetify applied" -ForegroundColor Green; $script:success += "Spicetify applied to Spotify" }
+    else { Write-Host "  Spicetify apply failed (code $LASTEXITCODE)" -ForegroundColor Red; $script:failed += "Spicetify apply"; $script:notes += "Spicetify: 'backup apply' failed. Open Spotify, log in once, then run: spicetify backup apply" }
+}
+
 # ---------- main loop ----------
 $total = $items.Count; $count = 0
 foreach ($item in $items) {
@@ -225,14 +251,19 @@ foreach ($item in $items) {
     Write-Host "`n[$count/$total] $($item.Name)" -ForegroundColor Yellow
     Write-Host "  Checking if already installed..."
 
+    $justInstalled = $false
     if (Test-ItemInstalled $item) {
         Write-Host "  ALREADY INSTALLED: $($item.Name)" -ForegroundColor DarkGreen
         $already += $item.Name
     }
     else {
         Write-Host "  Not found, installing..."
+        $justInstalled = $true
         if ($item.Type -eq "github") { Install-GitHub $item } else { Install-Winget $item }
     }
+
+    # Spicetify wasn't there: open Spotify once, then run backup apply
+    if ($item.Name -eq "Spicetify" -and $justInstalled) { Invoke-SpicetifySetup }
 
     # Right after Thorium: offer to make it the default browser
     if ($item.Name -eq "Thorium") { Set-ThoriumDefault }
@@ -282,7 +313,13 @@ Write-Host "`nID not found (check with 'winget search'):" -ForegroundColor Magen
 
 Write-Host "`nManual steps:" -ForegroundColor Yellow
 $notes | ForEach-Object { Write-Host " * $_" }
-Write-Host " * EXM Tweaks: download needs a free EXM account login, get it from https://exmtweaks.com/en-us/download"
-Write-Host " * Roblox: open Bloxstrap and it will download Roblox for you"
-Write-Host " * Spicetify: open Spotify once and log in, then run:  spicetify backup apply"
+# ---------- launch Bloxstrap (it downloads Roblox on first run) ----------
+$blox = "$env:LOCALAPPDATA\Bloxstrap\Bloxstrap.exe"
+if (Test-Path $blox) {
+    Write-Host "`nLaunching Bloxstrap..." -ForegroundColor Cyan
+    Start-Process $blox
+} else {
+    Write-Host "`nCouldn't find Bloxstrap at $blox, open it from the Start menu." -ForegroundColor DarkYellow
+}
+
 Read-Host "`nPress Enter to exit"
