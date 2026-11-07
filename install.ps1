@@ -1,6 +1,7 @@
 # ==========================================
 # MY PC - AUTOMATIC APP INSTALLER (Win 10/11)
 # Run in a NORMAL (non-admin) PowerShell window so Spotify installs.
+# Checks each app first and skips anything already installed.
 # ==========================================
 
 $ErrorActionPreference = "Continue"
@@ -17,106 +18,153 @@ if ($isAdmin) {
     Write-Host "WARNING: running as admin. Spotify's installer will fail. Re-run in a normal window." -ForegroundColor Yellow
 }
 
-# ---------- winget (community repo + Store) ----------
-$apps = @(
-    @{Name="7-Zip";                ID="7zip.7zip"}
-    @{Name="Bloxstrap";            ID="pizzaboxer.Bloxstrap"}
-    @{Name="Claude";               ID="Anthropic.Claude"}
-    @{Name="Epic Games Launcher";  ID="EpicGames.EpicGamesLauncher"}
-    @{Name="Firefox";              ID="Mozilla.Firefox"}
-    @{Name="Modrinth";             ID="Modrinth.ModrinthApp"}
-    @{Name="OBS Studio";           ID="OBSProject.OBSStudio"}
-    @{Name="Parsec";               ID="Parsec.Parsec"}
-    @{Name="Razer Synapse";        ID="Razer.Synapse3"}
-    @{Name="Roblox";               ID="Roblox.Roblox"}
-    @{Name="Spotify";              ID="Spotify.Spotify"}
-    @{Name="Steam";                ID="Valve.Steam"}
-    @{Name="Thorium";              ID="Alex313031.Thorium"}
-    @{Name="Visual Studio Code";   ID="Microsoft.VisualStudioCode"}
-    @{Name="VLC";                  ID="VideoLAN.VLC"}
-    @{Name="Spicetify";            ID="Spicetify.Spicetify"}   # keep AFTER Spotify
-    @{Name="ChatGPT";              ID="9NT1R1C2HH7J"; Store=$true}
-    @{Name="Xbox App";             ID="9MV0B5HZVK9Z"; Store=$true}
-    @{Name="Xbox Gaming Services"; ID="9MWPM2CQNLHN"; Store=$true}
-    @{Name="Xbox Game Bar";        ID="9NZKPSTSNW4P"; Store=$true}
-    @{Name="OP Auto Clicker";      ID="9N621DM2LVHQ"; Store=$true}
+# ---------- app list (order matters: Spicetify after Spotify) ----------
+# Type: winget | store | github
+$items = @(
+    @{Name="7-Zip";                Type="winget"; ID="7zip.7zip"}
+    @{Name="Bloxstrap";            Type="winget"; ID="pizzaboxer.Bloxstrap"}   # Bloxstrap downloads Roblox itself on first launch
+    @{Name="Claude";               Type="winget"; ID="Anthropic.Claude"}
+    @{Name="Epic Games Launcher";  Type="winget"; ID="EpicGames.EpicGamesLauncher"}
+    @{Name="Firefox";              Type="winget"; ID="Mozilla.Firefox"}
+    @{Name="Modrinth";             Type="winget"; ID="Modrinth.ModrinthApp"}
+    @{Name="OBS Studio";           Type="winget"; ID="OBSProject.OBSStudio"}
+    @{Name="Parsec";               Type="winget"; ID="Parsec.Parsec"}
+    @{Name="Razer Synapse";        Type="winget"; ID="Razer.Synapse3"}
+    @{Name="Spotify";              Type="winget"; ID="Spotify.Spotify"}
+    @{Name="Spicetify";            Type="winget"; ID="Spicetify.Spicetify"; Exe="$env:LOCALAPPDATA\spicetify\spicetify.exe"; Cmd="spicetify"}
+    @{Name="Steam";                Type="winget"; ID="Valve.Steam"}
+    @{Name="Thorium";              Type="winget"; ID="Alex313031.Thorium"}
+    @{Name="Visual Studio Code";   Type="winget"; ID="Microsoft.VisualStudioCode"}
+    @{Name="VLC";                  Type="winget"; ID="VideoLAN.VLC"}
+    @{Name="ChatGPT";              Type="store";  ID="9NT1R1C2HH7J"; Appx="*ChatGPT*"}
+    @{Name="Xbox App";             Type="store";  ID="9MV0B5HZVK9Z"; Appx="Microsoft.GamingApp"}
+    @{Name="Xbox Gaming Services"; Type="store";  ID="9MWPM2CQNLHN"; Appx="Microsoft.GamingServices"}
+    @{Name="Xbox Game Bar";        Type="store";  ID="9NZKPSTSNW4P"; Appx="Microsoft.XboxGamingOverlay"}
+    @{Name="OP Auto Clicker";      Type="store";  ID="9N621DM2LVHQ"}
+    @{Name="MultiAlt";             Type="github"; Repo="luanmacea/MultiAlt"; Asset="*.msi"; Match="*MultiAlt*"; Folders=@("$env:LOCALAPPDATA\MultiAlt","$env:LOCALAPPDATA\Programs\MultiAlt","$env:ProgramFiles\MultiAlt")}
+    @{Name="Yapfast";              Type="github"; Repo="yapfast/yapfast"; Asset="*windows-x64-setup.exe"; Args="/S"; Match="*Yapfast*"; Folders=@("$env:LOCALAPPDATA\Yapfast","$env:LOCALAPPDATA\Programs\Yapfast","$env:ProgramFiles\Yapfast")}
 )
 
-$success = @(); $failed = @(); $skipped = @()
-$alreadyCodes = @(-1978335135, -1978335189)
-$total = $apps.Count; $count = 0
+$success = @(); $already = @(); $failed = @(); $skipped = @()
+$alreadyCodes = @(-1978335135, -1978335189)   # winget: already installed / no upgrade available
 
-foreach ($app in $apps) {
-    $count++
-    Write-Host "`n[$count/$total] $($app.Name)..." -ForegroundColor Yellow
-    $src = if ($app.Store) { "msstore" } else { "winget" }
-
-    winget show --id $app.ID --exact --source $src --accept-source-agreements *> $null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "NOT FOUND: $($app.Name) ($($app.ID))" -ForegroundColor Magenta
-        $skipped += "$($app.Name) ($($app.ID))"; continue
-    }
-
-    winget install --id $app.ID --exact --source $src --silent `
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
-
-    if ($LASTEXITCODE -eq 0) { Write-Host "SUCCESS: $($app.Name)" -ForegroundColor Green; $success += $app.Name }
-    elseif ($alreadyCodes -contains $LASTEXITCODE) { Write-Host "ALREADY INSTALLED: $($app.Name)" -ForegroundColor DarkGreen; $success += "$($app.Name) (already installed)" }
-    else { Write-Host "FAILED: $($app.Name) (code $LASTEXITCODE)" -ForegroundColor Red; $failed += $app.Name }
+# ---------- detection helpers ----------
+function Test-WingetInstalled($id, $src) {
+    winget list --id $id --exact --source $src --accept-source-agreements *> $null
+    return ($LASTEXITCODE -eq 0)
 }
 
-# ---------- GitHub release downloads (MultiAlt, Yapfast) ----------
-function Install-GitHubRelease {
-    param($Name, $Repo, $AssetPattern, $InstallArgs)
+function Test-UninstallEntry($pattern) {
+    $keys = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    $hit = Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like $pattern }
+    return [bool]$hit
+}
 
-    Write-Host "`n[GitHub] $Name..." -ForegroundColor Yellow
+function Test-ItemInstalled($item) {
+    switch ($item.Type) {
+        "winget" {
+            if (Test-WingetInstalled $item.ID "winget") { return $true }
+            if ($item.Exe -and (Test-Path $item.Exe)) { return $true }
+            if ($item.Cmd -and (Get-Command $item.Cmd -ErrorAction SilentlyContinue)) { return $true }
+            return $false
+        }
+        "store" {
+            if (Test-WingetInstalled $item.ID "msstore") { return $true }
+            if ($item.Appx -and (Get-AppxPackage -Name $item.Appx -ErrorAction SilentlyContinue)) { return $true }
+            return $false
+        }
+        "github" {
+            if (Test-UninstallEntry $item.Match) { return $true }
+            foreach ($f in $item.Folders) { if (Test-Path $f) { return $true } }
+            return $false
+        }
+    }
+}
+
+# ---------- install helpers ----------
+function Install-Winget($item) {
+    $src = if ($item.Type -eq "store") { "msstore" } else { "winget" }
+
+    winget show --id $item.ID --exact --source $src --accept-source-agreements *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  NOT FOUND: $($item.Name) ($($item.ID))" -ForegroundColor Magenta
+        $script:skipped += "$($item.Name) ($($item.ID))"; return
+    }
+
+    winget install --id $item.ID --exact --source $src --silent `
+        --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+    if ($LASTEXITCODE -eq 0) { Write-Host "  SUCCESS: $($item.Name)" -ForegroundColor Green; $script:success += $item.Name }
+    elseif ($alreadyCodes -contains $LASTEXITCODE) { Write-Host "  ALREADY INSTALLED: $($item.Name)" -ForegroundColor DarkGreen; $script:already += $item.Name }
+    else { Write-Host "  FAILED: $($item.Name) (code $LASTEXITCODE)" -ForegroundColor Red; $script:failed += $item.Name }
+}
+
+function Install-GitHub($item) {
     try {
-        $rel = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "pc-installer" }
-        $asset = $rel.assets | Where-Object { $_.name -like $AssetPattern } | Select-Object -First 1
-        if (-not $asset) { throw "No asset matching $AssetPattern in $($rel.tag_name)" }
+        $rel = Invoke-RestMethod "https://api.github.com/repos/$($item.Repo)/releases/latest" -Headers @{ "User-Agent" = "pc-installer" }
+        $asset = $rel.assets | Where-Object { $_.name -like $item.Asset } | Select-Object -First 1
+        if (-not $asset) { throw "No asset matching $($item.Asset) in $($rel.tag_name)" }
 
         # Only ever download from the project's own GitHub release
-        if ($asset.browser_download_url -notlike "https://github.com/$Repo/releases/download/*") { throw "Unexpected download URL" }
+        if ($asset.browser_download_url -notlike "https://github.com/$($item.Repo)/releases/download/*") { throw "Unexpected download URL" }
 
         $file = Join-Path $env:TEMP $asset.name
+        Write-Host "  Downloading $($asset.name) ($($rel.tag_name))..."
         Invoke-WebRequest $asset.browser_download_url -OutFile $file -UseBasicParsing
 
-        # Verify SHA256 if GitHub published one for the asset
         if ($asset.digest -and $asset.digest -like "sha256:*") {
             $expected = $asset.digest.Substring(7)
             $actual = (Get-FileHash $file -Algorithm SHA256).Hash
             if ($actual -ne $expected) { Remove-Item $file -Force; throw "Hash mismatch, file deleted" }
-            Write-Host "Hash verified ($($rel.tag_name))" -ForegroundColor DarkGreen
+            Write-Host "  Hash verified" -ForegroundColor DarkGreen
         } else {
-            Write-Host "No published hash for this asset, skipping hash check" -ForegroundColor DarkYellow
+            Write-Host "  No published hash for this asset, skipping hash check" -ForegroundColor DarkYellow
         }
 
         if ($file -like "*.msi") { $p = Start-Process msiexec.exe -ArgumentList "/i `"$file`" /qn" -Wait -PassThru }
-        else { $p = Start-Process $file -ArgumentList $InstallArgs -Wait -PassThru }
+        else { $p = Start-Process $file -ArgumentList $item.Args -Wait -PassThru }
 
-        if ($p.ExitCode -eq 0) { Write-Host "SUCCESS: $Name" -ForegroundColor Green; $script:success += "$Name $($rel.tag_name)" }
+        if ($p.ExitCode -eq 0) { Write-Host "  SUCCESS: $($item.Name) $($rel.tag_name)" -ForegroundColor Green; $script:success += "$($item.Name) $($rel.tag_name)" }
         else { throw "Installer exit code $($p.ExitCode)" }
     }
     catch {
-        Write-Host "FAILED: $Name - $_" -ForegroundColor Red
-        $script:failed += $Name
+        Write-Host "  FAILED: $($item.Name) - $_" -ForegroundColor Red
+        $script:failed += $item.Name
     }
 }
 
-# MultiAlt: per-user .msi from github.com/luanmacea/MultiAlt
-Install-GitHubRelease -Name "MultiAlt" -Repo "luanmacea/MultiAlt" -AssetPattern "*.msi"
+# ---------- main loop ----------
+$total = $items.Count; $count = 0
+foreach ($item in $items) {
+    $count++
+    Write-Progress -Activity "Installing apps" -Status "$($item.Name) ($count/$total)" -PercentComplete (($count / $total) * 100)
+    Write-Host "`n[$count/$total] $($item.Name)" -ForegroundColor Yellow
+    Write-Host "  Checking if already installed..."
 
-# Yapfast: per-user setup .exe from github.com/yapfast/yapfast (no admin; unsigned beta)
-Install-GitHubRelease -Name "Yapfast" -Repo "yapfast/yapfast" -AssetPattern "*windows-x64-setup.exe" -InstallArgs "/S"
+    if (Test-ItemInstalled $item) {
+        Write-Host "  ALREADY INSTALLED: $($item.Name)" -ForegroundColor DarkGreen
+        $already += $item.Name
+        continue
+    }
+
+    Write-Host "  Not found, installing..."
+    if ($item.Type -eq "github") { Install-GitHub $item } else { Install-Winget $item }
+}
+Write-Progress -Activity "Installing apps" -Completed
 
 # ---------- report ----------
 Write-Host "`n==== REPORT ====" -ForegroundColor Cyan
-Write-Host "`nInstalled:" -ForegroundColor Green;  $success | ForEach-Object { Write-Host " + $_" }
-Write-Host "`nFailed:" -ForegroundColor Red;       $failed  | ForEach-Object { Write-Host " - $_" }
+Write-Host "`nNewly installed:" -ForegroundColor Green;   $success | ForEach-Object { Write-Host " + $_" }
+Write-Host "`nAlready installed:" -ForegroundColor DarkGreen; $already | ForEach-Object { Write-Host " = $_" }
+Write-Host "`nFailed:" -ForegroundColor Red;              $failed  | ForEach-Object { Write-Host " - $_" }
 Write-Host "`nID not found (check with 'winget search'):" -ForegroundColor Magenta; $skipped | ForEach-Object { Write-Host " ? $_" }
 
 Write-Host "`nManual steps:" -ForegroundColor Yellow
-Write-Host " * EXM Tweaks: download needs a free EXM account login, so get it from https://exmtweaks.com/en-us/download"
+Write-Host " * EXM Tweaks: download needs a free EXM account login, get it from https://exmtweaks.com/en-us/download"
+Write-Host " * Roblox: open Bloxstrap and it will download Roblox for you"
 Write-Host " * Spicetify: open Spotify once and log in, then run:  spicetify backup apply"
-Write-Host " * Yapfast: if the silent flag didn't work, run the installer from your Temp folder by hand"
 Read-Host "`nPress Enter to exit"
