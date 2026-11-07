@@ -151,44 +151,64 @@ function Get-ThoriumPath {
     return $null
 }
 
+function Get-ThoriumProgId {
+    # The ProgId Thorium registers for https links (what Windows stores when it's the default)
+    foreach ($root in @("HKCU:\Software\Clients\StartMenuInternet","HKLM:\Software\Clients\StartMenuInternet","HKLM:\Software\WOW6432Node\Clients\StartMenuInternet")) {
+        $k = Get-ChildItem $root -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "*Thorium*" } | Select-Object -First 1
+        if ($k) {
+            $v = (Get-ItemProperty (Join-Path $k.PSPath "Capabilities\URLAssociations") -ErrorAction SilentlyContinue).https
+            if ($v) { return $v }
+        }
+    }
+    return $null
+}
+
 function Test-ThoriumIsDefault {
-    $keys = @("https","http")
-    foreach ($k in $keys) {
+    $expected = Get-ThoriumProgId
+    foreach ($k in @("https","http")) {
         $prog = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\$k\UserChoice" -ErrorAction SilentlyContinue).ProgId
-        if ($prog -notlike "*Thorium*") { return $false }
+        if (-not $prog) { return $false }
+        if ($expected) { if ($prog -ne $expected) { return $false } }
+        elseif ($prog -notlike "*Thorium*") { return $false }
     }
     return $true
 }
 
-function Set-ThoriumDefaultAuto {
-    # Best effort using PS-SFTA (open source, MIT: github.com/DanysysTeam/PS-SFTA).
-    # Pinned to a known file hash. If it doesn't match, we don't run it.
-    $expected = "3eb6f6dee3fd8c91604042060b9d658f08ec85d3fd0a14769119dfd78bc30851"
-    $file = Join-Path $env:TEMP "SFTA.ps1"
+function Set-ThoriumDefaultUI {
+    # Windows blocks scripts from writing the default browser directly, so this does what you'd do:
+    # open Thorium's page in Settings and press the 'Set default' button for you.
     try {
-        Invoke-WebRequest "https://raw.githubusercontent.com/DanysysTeam/PS-SFTA/master/SFTA.ps1" -OutFile $file -UseBasicParsing
-        if ((Get-FileHash $file -Algorithm SHA256).Hash -ne $expected) { Write-Host "  SFTA file changed upstream, not running it" -ForegroundColor DarkYellow; return $false }
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+        $AE = [System.Windows.Automation.AutomationElement]
+        $TS = [System.Windows.Automation.TreeScope]
+        $PC = [System.Windows.Automation.PropertyCondition]
 
-        # Find Thorium's registered capabilities (what shows up as options in Settings)
-        $cap = $null
-        foreach ($root in @("HKCU:\Software\Clients\StartMenuInternet","HKLM:\Software\Clients\StartMenuInternet","HKLM:\Software\WOW6432Node\Clients\StartMenuInternet")) {
-            $k = Get-ChildItem $root -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "*Thorium*" } | Select-Object -First 1
-            if ($k) { $cap = Join-Path $k.PSPath "Capabilities"; break }
+        Start-Process "ms-settings:defaultapps?registeredAppUser=Thorium"
+        $deadline = (Get-Date).AddSeconds(25)
+        $clicked = $false
+        while ((Get-Date) -lt $deadline -and -not $clicked) {
+            Start-Sleep -Milliseconds 700
+            $win = $AE::RootElement.FindFirst($TS::Children, (New-Object $PC($AE::NameProperty, "Settings")))
+            if (-not $win) { continue }
+            $btn = $win.FindFirst($TS::Descendants, (New-Object $PC($AE::NameProperty, "Set default")))
+            if ($btn) {
+                $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+                $clicked = $true
+            }
         }
-        if (-not $cap -or -not (Test-Path $cap)) { Write-Host "  Couldn't find Thorium's browser registration" -ForegroundColor DarkYellow; return $false }
+        if (-not $clicked) { return $false }
 
-        # Load the hash-verified code from text so the system script policy doesn't block it
-        . ([scriptblock]::Create((Get-Content $file -Raw)))
-
-        $urls  = Get-ItemProperty (Join-Path $cap "URLAssociations") -ErrorAction SilentlyContinue
-        $files = Get-ItemProperty (Join-Path $cap "FileAssociations") -ErrorAction SilentlyContinue
-        $skip = "PSPath","PSParentPath","PSChildName","PSDrive","PSProvider"
-        if ($urls)  { $urls.PSObject.Properties  | Where-Object { $skip -notcontains $_.Name } | ForEach-Object { Set-PTA $_.Value $_.Name } }
-        if ($files) { $files.PSObject.Properties | Where-Object { $skip -notcontains $_.Name } | ForEach-Object { Set-FTA $_.Value $_.Name } }
-        Start-Sleep -Seconds 1
-        return (Test-ThoriumIsDefault)
+        # Wait for Windows to apply it
+        for ($i = 0; $i -lt 10; $i++) {
+            Start-Sleep -Seconds 1
+            if (Test-ThoriumIsDefault) {
+                Get-Process SystemSettings -ErrorAction SilentlyContinue | Stop-Process -Force
+                return $true
+            }
+        }
+        return $false
     }
-    catch { Write-Host "  Auto-set failed: $_" -ForegroundColor DarkYellow; return $false }
+    catch { Write-Host "  Auto-click failed: $_" -ForegroundColor DarkYellow; return $false }
 }
 
 function Set-ThoriumDefault {
@@ -198,17 +218,17 @@ function Set-ThoriumDefault {
         return
     }
 
-    Write-Host "  Trying to set Thorium as default browser..."
-    if (Set-ThoriumDefaultAuto) {
+    Write-Host "  Setting Thorium as default browser (pressing 'Set default' in Settings)..." -ForegroundColor Yellow
+    if (Set-ThoriumDefaultUI) {
         Write-Host "  Thorium is now your default browser" -ForegroundColor Green
         $script:success += "Thorium set as default browser"
         return
     }
 
-    # Fallback: Windows blocked it, so open Thorium's page in Settings for a one-click finish
-    Write-Host "  Couldn't set it automatically. Opening Settings (click 'Set default'). Continuing install..." -ForegroundColor Yellow
+    # Fallback: leave Settings open on Thorium's page for a manual click
+    Write-Host "  Couldn't confirm it. Settings is open on Thorium's page, click 'Set default'. Continuing install..." -ForegroundColor Yellow
     Start-Process "ms-settings:defaultapps?registeredAppUser=Thorium"
-    $script:notes += "Thorium default browser: auto-set didn't work on this Windows build, so click 'Set default' in the Settings window that opened."
+    $script:notes += "Thorium default browser: couldn't confirm it was set. Click 'Set default' in the Settings window."
 }
 
 function Open-InThorium($url) {
@@ -322,4 +342,10 @@ if (Test-Path $blox) {
     Write-Host "`nCouldn't find Bloxstrap at $blox, open it from the Start menu." -ForegroundColor DarkYellow
 }
 
-Read-Host "`nPress Enter to exit"
+if ($failed.Count -gt 0 -or $skipped.Count -gt 0) {
+    Read-Host "`nSomething needs a look (see above). Press Enter to close"
+} else {
+    Write-Host "`nAll done. Closing in 10 seconds..." -ForegroundColor Cyan
+    Start-Sleep -Seconds 10
+}
+exit
