@@ -151,86 +151,6 @@ function Get-ThoriumPath {
     return $null
 }
 
-function Get-ThoriumProgId {
-    # The ProgId Thorium registers for https links (what Windows stores when it's the default)
-    foreach ($root in @("HKCU:\Software\Clients\StartMenuInternet","HKLM:\Software\Clients\StartMenuInternet","HKLM:\Software\WOW6432Node\Clients\StartMenuInternet")) {
-        $k = Get-ChildItem $root -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "*Thorium*" } | Select-Object -First 1
-        if ($k) {
-            $v = (Get-ItemProperty (Join-Path $k.PSPath "Capabilities\URLAssociations") -ErrorAction SilentlyContinue).https
-            if ($v) { return $v }
-        }
-    }
-    return $null
-}
-
-function Test-ThoriumIsDefault {
-    $expected = Get-ThoriumProgId
-    foreach ($k in @("https","http")) {
-        $prog = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\$k\UserChoice" -ErrorAction SilentlyContinue).ProgId
-        if (-not $prog) { return $false }
-        if ($expected) { if ($prog -ne $expected) { return $false } }
-        elseif ($prog -notlike "*Thorium*") { return $false }
-    }
-    return $true
-}
-
-function Set-ThoriumDefaultUI {
-    # Windows blocks scripts from writing the default browser directly, so this does what you'd do:
-    # open Thorium's page in Settings and press the 'Set default' button for you.
-    try {
-        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-        $AE = [System.Windows.Automation.AutomationElement]
-        $TS = [System.Windows.Automation.TreeScope]
-        $PC = [System.Windows.Automation.PropertyCondition]
-
-        Start-Process "ms-settings:defaultapps?registeredAppUser=Thorium"
-        $deadline = (Get-Date).AddSeconds(25)
-        $clicked = $false
-        while ((Get-Date) -lt $deadline -and -not $clicked) {
-            Start-Sleep -Milliseconds 700
-            $win = $AE::RootElement.FindFirst($TS::Children, (New-Object $PC($AE::NameProperty, "Settings")))
-            if (-not $win) { continue }
-            $btn = $win.FindFirst($TS::Descendants, (New-Object $PC($AE::NameProperty, "Set default")))
-            if ($btn) {
-                $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-                $clicked = $true
-            }
-        }
-        if (-not $clicked) { return $false }
-
-        # Wait for Windows to apply it
-        for ($i = 0; $i -lt 10; $i++) {
-            Start-Sleep -Seconds 1
-            if (Test-ThoriumIsDefault) {
-                Get-Process SystemSettings -ErrorAction SilentlyContinue | Stop-Process -Force
-                return $true
-            }
-        }
-        return $false
-    }
-    catch { Write-Host "  Auto-click failed: $_" -ForegroundColor DarkYellow; return $false }
-}
-
-function Set-ThoriumDefault {
-    if (-not (Get-ThoriumPath)) { return }
-    if (Test-ThoriumIsDefault) {
-        Write-Host "  Thorium is already your default browser" -ForegroundColor DarkGreen
-        return
-    }
-
-    Write-Host "  Setting Thorium as default browser (pressing 'Set default' in Settings)..." -ForegroundColor Yellow
-    if (Set-ThoriumDefaultUI) {
-        Write-Host "  Thorium is now your default browser" -ForegroundColor Green
-        $script:success += "Thorium set as default browser"
-        return
-    }
-
-    # Fallback: leave Settings open on Thorium's page for a manual click
-    Write-Host "  Couldn't confirm it. Settings is open on Thorium's page, click 'Set default'. Continuing install..." -ForegroundColor Yellow
-    Start-Process "ms-settings:defaultapps?registeredAppUser=Thorium"
-    $script:notes += "Thorium default browser: couldn't confirm it was set. Click 'Set default' in the Settings window."
-}
-
 function Open-InThorium($url) {
     $exe = Get-ThoriumPath
     if ($exe) { Start-Process $exe -ArgumentList $url }
@@ -284,9 +204,6 @@ foreach ($item in $items) {
 
     # Spicetify wasn't there: open Spotify once, then run backup apply
     if ($item.Name -eq "Spicetify" -and $justInstalled) { Invoke-SpicetifySetup }
-
-    # Right after Thorium: offer to make it the default browser
-    if ($item.Name -eq "Thorium") { Set-ThoriumDefault }
 }
 Write-Progress -Activity "Installing apps" -Completed
 
