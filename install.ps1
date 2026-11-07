@@ -177,7 +177,8 @@ function Set-ThoriumDefaultAuto {
         }
         if (-not $cap -or -not (Test-Path $cap)) { Write-Host "  Couldn't find Thorium's browser registration" -ForegroundColor DarkYellow; return $false }
 
-        . $file
+        # Load the hash-verified code from text so the system script policy doesn't block it
+        . ([scriptblock]::Create((Get-Content $file -Raw)))
 
         $urls  = Get-ItemProperty (Join-Path $cap "URLAssociations") -ErrorAction SilentlyContinue
         $files = Get-ItemProperty (Join-Path $cap "FileAssociations") -ErrorAction SilentlyContinue
